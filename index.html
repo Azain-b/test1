@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Infinite Board</title>
+<meta name="description" content="Бесконечная интерактивная доска: стикеры, фигуры, стрелки и рисование.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#15161b" media="(prefers-color-scheme: dark)">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --canvas: #f7f7f5; --dot: #d6d8de; --surface: #ffffff; --ink: #0f1020; --muted: #6b6e80;
+    --line: rgba(15,16,32,.1); --accent: #ffd02f; --sel: #4262ff; --hover: rgba(15,16,32,.06);
+    --shadow: 0 1px 2px rgba(15,16,32,.08), 0 8px 24px rgba(15,16,32,.12);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --canvas: #15161b; --dot: #2c2e37; --surface: #20222a; --ink: #ececf1; --muted: #9a9db0;
+      --line: rgba(255,255,255,.1); --sel: #7b92ff; --hover: rgba(255,255,255,.08);
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.4); color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--canvas); color: var(--ink);
+    font: 500 13px/1.4 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; touch-action: manipulation; }
+  :focus-visible { outline: 2px solid var(--sel); outline-offset: 2px; }
+
+  #stage { position: fixed; inset: 0; touch-action: none; user-select: none; -webkit-user-select: none; overflow: hidden;
+    background-color: var(--canvas);
+    background-image: radial-gradient(circle, var(--dot) 1.2px, transparent 1.4px);
+    background-size: var(--gs, 24px) var(--gs, 24px); background-position: var(--gx, 0) var(--gy, 0); cursor: default; }
+  #stage[data-tool="hand"] { cursor: grab; }
+  #stage.panning { cursor: grabbing; }
+  #stage[data-tool="sticky"], #stage[data-tool="text"], #stage[data-tool="rect"], #stage[data-tool="ellipse"],
+  #stage[data-tool="pen"], #stage[data-tool="arrow"] { cursor: crosshair; }
+  #world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  #vec { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+  #vec .hit { pointer-events: stroke; }
+
+  .item { position: absolute; display: flex; align-items: center; justify-content: center; text-align: center;
+    color: #0f1020; padding: 12px; word-break: break-word; }
+  .item .txt { outline: none; width: 100%; white-space: pre-wrap; min-height: 1.3em; cursor: inherit; }
+  .item.sticky { align-items: flex-start; justify-content: flex-start; text-align: left; font-size: 18px; line-height: 1.35;
+    padding: 16px; border-radius: 4px; box-shadow: 0 1px 1px rgba(0,0,0,.08), 0 6px 14px rgba(0,0,0,.12); }
+  .item.rect, .item.ellipse { border: 2px solid #0f1020; font-size: 16px; }
+  .item.rect { border-radius: 6px; }
+  .item.ellipse { border-radius: 50%; }
+  .item.text { font-size: 24px; color: var(--ink); justify-content: flex-start; text-align: left; padding: 4px 6px; }
+  .item.editing { cursor: text; }
+
+  #sel { position: absolute; left: 0; top: 0; pointer-events: none; }
+  .selbox { position: absolute; border: calc(1.5px / var(--z, 1)) solid var(--sel); pointer-events: none; }
+  .selbox.group { border-style: dashed; }
+  .handle { position: absolute; width: calc(10px / var(--z, 1)); height: calc(10px / var(--z, 1)); background: var(--surface);
+    border: calc(1.5px / var(--z, 1)) solid var(--sel); right: calc(-5px / var(--z, 1)); bottom: calc(-5px / var(--z, 1));
+    pointer-events: auto; cursor: nwse-resize; border-radius: 2px; }
+  #marquee { position: fixed; border: 1px solid var(--sel); background: color-mix(in srgb, var(--sel) 12%, transparent); display: none; pointer-events: none; }
+
+  .panel { position: fixed; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow); border: 1px solid var(--line); z-index: 10; }
+  #tools { left: 16px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 2px; padding: 6px; }
+  .tool { position: relative; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 8px; color: var(--ink);
+    transition: background-color .12s, transform .12s; }
+  .tool:hover { background: var(--hover); }
+  .tool[aria-pressed="true"] { background: var(--accent); color: #0f1020; }
+  .tool svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .tool .tip { position: absolute; left: 48px; white-space: nowrap; background: var(--ink); color: var(--canvas); padding: 4px 8px; border-radius: 6px;
+    font-size: 12px; opacity: 0; transform: translateX(-4px); pointer-events: none; transition: opacity .12s, transform .12s; }
+  .tool:hover .tip, .tool:focus-visible .tip { opacity: 1; transform: none; }
+  .sep { height: 1px; background: var(--line); margin: 4px 6px; }
+
+  #ctx { display: none; align-items: center; gap: 4px; padding: 6px; transform: translate(-50%, -100%); }
+  #ctx.show { display: flex; }
+  .sw { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
+  .sw[aria-pressed="true"] { border-color: var(--surface); outline: 2px solid var(--sel); }
+  .ctxbtn { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; }
+  .ctxbtn:hover { background: var(--hover); }
+  .ctxbtn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+  #bar { right: 16px; bottom: 16px; display: flex; align-items: center; padding: 4px; gap: 2px; }
+  #bar button { min-width: 36px; height: 36px; border-radius: 8px; display: grid; place-items: center; padding: 0 6px; transition: background-color .12s; }
+  #bar button:hover:not(:disabled) { background: var(--hover); }
+  #bar button:disabled { opacity: .35; cursor: default; }
+  #bar svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  #zoomLabel { min-width: 52px !important; font-variant-numeric: tabular-nums; }
+
+  #brand { left: 16px; top: 16px; display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px; }
+  #brand .logo { width: 24px; height: 24px; border-radius: 6px; background: var(--accent); display: grid; place-items: center; }
+  #brand .logo svg { width: 14px; height: 14px; stroke: #0f1020; fill: none; stroke-width: 2.2; stroke-linecap: round; }
+  #brand b { font-weight: 600; font-size: 14px; text-wrap: balance; }
+  #hint { left: 16px; bottom: 16px; padding: 8px 12px; color: var(--muted); font-size: 12px; max-width: min(340px, calc(100vw - 200px)); }
+  #hint kbd { font: inherit; background: var(--hover); padding: 0 5px; border-radius: 4px; color: var(--ink); }
+
+  #toast { position: fixed; left: 50%; bottom: 72px; transform: translate(-50%, 8px); background: var(--ink); color: var(--canvas);
+    padding: 8px 14px; border-radius: 8px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; z-index: 20; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (max-width: 640px) {
+    #tools { left: 50%; top: auto; bottom: 16px; transform: translateX(-50%); flex-direction: row; max-width: calc(100vw - 16px); overflow-x: auto; }
+    .sep { width: 1px; height: auto; margin: 6px 4px; }
+    .tool .tip { display: none; }
+    #bar { bottom: 80px; right: 8px; } #hint { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition-duration: .01ms !important; } }
+</style>
+</head>
+<body>
+<div id="stage" data-tool="select" role="application" aria-label="Бесконечная доска">
+  <div id="world">
+    <svg id="vec" aria-hidden="true"></svg>
+    <div id="items"></div>
+    <div id="sel"></div>
+  </div>
+</div>
+<div id="marquee"></div>
+
+<div class="panel" id="brand"><span class="logo"><svg viewBox="0 0 16 16"><path d="M2 12 L6 4 L10 10 L14 3"/></svg></span><b>Infinite Board</b></div>
+
+<nav class="panel" id="tools" aria-label="Инструменты"></nav>
+
+<div class="panel" id="ctx" role="toolbar" aria-label="Свойства объекта"></div>
+
+<div class="panel" id="bar" role="toolbar" aria-label="Масштаб и история">
+  <button id="undo" aria-label="Отменить (Ctrl+Z)" title="Отменить (Ctrl+Z)"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+  <button id="redo" aria-label="Повторить (Ctrl+Shift+Z)" title="Повторить (Ctrl+Shift+Z)"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+  <span class="sep" style="width:1px;height:20px;margin:0 4px"></span>
+  <button id="zoomOut" aria-label="Уменьшить" title="Уменьшить (−)"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+  <button id="zoomLabel" aria-label="Сбросить масштаб до 100%" title="Сбросить масштаб (Shift+0)">100%</button>
+  <button id="zoomIn" aria-label="Увеличить" title="Увеличить (+)"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+  <button id="fit" aria-label="Показать всё (Shift+1)" title="Показать всё (Shift+1)"><svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg></button>
+</div>
+
+<div class="panel" id="hint"><kbd>Пробел</kbd> + drag или колесо — двигать · <kbd>Ctrl</kbd> + колесо — масштаб · двойной клик — текст</div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+'use strict';
+const $ = (s, r = document) => r.querySelector(s);
+const stage = $('#stage'), world = $('#world'), vec = $('#vec'), itemsEl = $('#items'), selEl = $('#sel');
+const SVGNS = 'http://www.w3.org/2000/svg';
+const COLORS = ['#ffe066', '#ff9ec7', '#a8e6a3', '#9cd3ff', '#ffb870', '#c9b6ff', 'ink'];
+const STORE = 'infinite-board.v1';
+const ICONS = {
+  select: '<path d="M5 3l14 7-6 2-2 6z"/>',
+  hand: '<path d="M8 12V5a1.5 1.5 0 0 1 3 0v6m0-1V4a1.5 1.5 0 0 1 3 0v7m0-5a1.5 1.5 0 0 1 3 0v8a6 6 0 0 1-6 6h-1a6 6 0 0 1-4.5-2L4 14.5a1.6 1.6 0 0 1 2.4-2L8 14"/>',
+  sticky: '<path d="M4 4h16v10l-6 6H4z"/><path d="M14 20v-6h6"/>',
+  text: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',
+  rect: '<rect x="4" y="5" width="16" height="14" rx="2"/>',
+  ellipse: '<ellipse cx="12" cy="12" rx="9" ry="7"/>',
+  arrow: '<path d="M4 20 20 4M10 4h10v10"/>',
+  pen: '<path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/>',
+};
+const TOOLS = [
+  ['select', 'Выбрать', 'V'], ['hand', 'Рука', 'H'], null,
+  ['sticky', 'Стикер', 'S'], ['text', 'Текст', 'T'], ['rect', 'Прямоугольник', 'R'], ['ellipse', 'Эллипс', 'O'],
+  ['arrow', 'Стрелка', 'A'], ['pen', 'Карандаш', 'P'],
+];
+
+/* ---------- state ---------- */
+let items = [];
+let sel = new Set();
+let view = { x: 0, y: 0, z: 1 };
+let tool = 'select';
+let undoStack = [], redoStack = [];
+let spaceDown = false;
+let editingId = null;
+const els = new Map();
+let seq = 0;
+const uid = () => 'i' + Date.now().toString(36) + (seq++).toString(36);
+const byId = id => items.find(i => i.id === id);
+const colorOf = c => (c === 'ink' ? 'var(--ink)' : c);
+
+/* ---------- persistence & history ---------- */
+let saveT;
+function save() {
+  clearTimeout(saveT);
+  saveT = setTimeout(() => {
+    try { localStorage.setItem(STORE, JSON.stringify({ items, view })); } catch (e) { /* storage unavailable */ }
+  }, 250);
+}
+function load() {
+  try {
+    const d = JSON.parse(localStorage.getItem(STORE) || 'null');
+    if (d && Array.isArray(d.items)) { items = d.items; view = d.view || view; return true; }
+  } catch (e) { /* ignore */ }
+  return false;
+}
+function snapshot() { return JSON.stringify(items); }
+function pushUndo() { undoStack.push(snapshot()); if (undoStack.length > 100) undoStack.shift(); redoStack = []; updateHistoryBtns(); }
+function restore(s) { items = JSON.parse(s); sel = new Set([...sel].filter(id => byId(id))); draw(); save(); updateHistoryBtns(); }
+function undo() { if (!undoStack.length) return; redoStack.push(snapshot()); restore(undoStack.pop()); }
+function redo() { if (!redoStack.length) return; undoStack.push(snapshot()); restore(redoStack.pop()); }
+function updateHistoryBtns() { $('#undo').disabled = !undoStack.length; $('#redo').disabled = !redoStack.length; }
+
+/* ---------- geometry ---------- */
+const toWorld = (sx, sy) => ({ x: (sx - view.x) / view.z, y: (sy - view.y) / view.z });
+function endpoint(it, which) {
+  const p = it[which], other = it[which === 'a' ? 'b' : 'a'];
+  if (!p.id) return { x: p.x, y: p.y };
+  const t = byId(p.id);
+  if (!t) return { x: p.x, y: p.y };
+  const o = other.id && byId(other.id) ? center(byId(other.id)) : { x: other.x, y: other.y };
+  return edgePoint(t, o.x, o.y);
+}
+const center = it => ({ x: it.x + it.w / 2, y: it.y + it.h / 2 });
+function edgePoint(it, tx, ty) {
+  const c = center(it), dx = tx - c.x, dy = ty - c.y;
+  if (!dx && !dy) return c;
+  const hw = it.w / 2 + 4, hh = it.h / 2 + 4;
+  let s;
+  if (it.type === 'ellipse') s = 1 / Math.sqrt((dx * dx) / (hw * hw) + (dy * dy) / (hh * hh));
+  else s = Math.min(dx ? hw / Math.abs(dx) : Infinity, dy ? hh / Math.abs(dy) : Infinity);
+  return { x: c.x + dx * s, y: c.y + dy * s };
+}
+function bbox(it) {
+  if (it.type === 'pen') {
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const [x, y] of it.pts) { x1 = Math.min(x1, x); y1 = Math.min(y1, y); x2 = Math.max(x2, x); y2 = Math.max(y2, y); }
+    return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+  }
+  if (it.type === 'arrow') {
+    const a = endpoint(it, 'a'), b = endpoint(it, 'b');
+    return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y) };
+  }
+  return { x: it.x, y: it.y, w: it.w, h: it.h };
+}
+function moveItem(it, dx, dy) {
+  if (it.type === 'pen') it.pts = it.pts.map(([x, y]) => [x + dx, y + dy]);
+  else if (it.type === 'arrow') { for (const k of ['a', 'b']) if (!it[k].id) { it[k].x += dx; it[k].y += dy; } }
+  else { it.x += dx; it.y += dy; }
+}
+
+/* ---------- rendering ---------- */
+function mkEl(it) {
+  let el;
+  if (it.type === 'pen' || it.type === 'arrow') {
+    el = document.createElementNS(SVGNS, 'g');
+    el.dataset.id = it.id;
+    el.classList.add('vecitem');
+    el.innerHTML = '<path class="hit" fill="none" stroke="transparent" stroke-width="16" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/><path class="vis" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path class="head" stroke-linejoin="round"/>';
+    vec.appendChild(el);
+  } else {
+    el = document.createElement('div');
+    el.dataset.id = it.id;
+    el.className = 'item ' + it.type;
+    el.innerHTML = '<div class="txt"></div>';
+    itemsEl.appendChild(el);
+  }
+  els.set(it.id, el);
+  return el;
+}
+function draw() {
+  world.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`;
+  world.style.setProperty('--z', view.z);
+  const gs = 24 * view.z;
+  stage.style.setProperty('--gs', gs + 'px');
+  stage.style.setProperty('--gx', (view.x % gs) + 'px');
+  stage.style.setProperty('--gy', (view.y % gs) + 'px');
+  $('#zoomLabel').textContent = Math.round(view.z * 100) + '%';
+
+  const alive = new Set();
+  for (const it of items) {
+    alive.add(it.id);
+    const el = els.get(it.id) || mkEl(it);
+    if (it.type === 'pen' || it.type === 'arrow') drawVec(it, el);
+    else {
+      el.style.cssText = `left:${it.x}px;top:${it.y}px;width:${it.w}px;height:${it.h}px;`;
+      if (it.type !== 'text') el.style.background = colorOf(it.color);
+      else el.style.minHeight = it.h + 'px';
+      const t = el.firstChild;
+      if (editingId !== it.id && t.textContent !== it.text) t.textContent = it.text || '';
+    }
+  }
+  for (const [id, el] of els) if (!alive.has(id)) { el.remove(); els.delete(id); }
+  // z-order follows array order for html items
+  drawSelection();
+}
+function drawVec(it, el) {
+  const vis = el.querySelector('.vis'), hit = el.querySelector('.hit'), head = el.querySelector('.head');
+  const col = colorOf(it.color);
+  let d;
+  if (it.type === 'pen') {
+    d = it.pts.length < 2 ? '' : 'M' + it.pts.map(p => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join('L');
+    if (it.pts.length === 1) d = `M${it.pts[0][0]} ${it.pts[0][1]}l.01 0`;
+    head.setAttribute('d', '');
+  } else {
+    const a = endpoint(it, 'a'), b = endpoint(it, 'b');
+    d = `M${a.x} ${a.y}L${b.x} ${b.y}`;
+    const ang = Math.atan2(b.y - a.y, b.x - a.x), L = 16, W = Math.PI / 7;
+    head.setAttribute('d', `M${b.x} ${b.y}L${b.x - L * Math.cos(ang - W)} ${b.y - L * Math.sin(ang - W)}L${b.x - L * Math.cos(ang + W)} ${b.y - L * Math.sin(ang + W)}Z`);
+    head.setAttribute('fill', col); head.setAttribute('stroke', col);
+  }
+  vis.setAttribute('d', d); hit.setAttribute('d', d);
+  vis.setAttribute('stroke', col);
+  vis.setAttribute('stroke-width', it.type === 'pen' ? 3 : 2.5);
+}
+function drawSelection() {
+  selEl.innerHTML = '';
+  const list = [...sel].map(byId).filter(Boolean);
+  const mk = (b, cls) => {
+    const d = document.createElement('div');
+    d.className = 'selbox ' + (cls || '');
+    const pad = 4 / view.z;
+    d.style.cssText = `left:${b.x - pad}px;top:${b.y - pad}px;width:${b.w + pad * 2}px;height:${b.h + pad * 2}px`;
+    selEl.appendChild(d);
+    return d;
+  };
+  for (const it of list) mk(bbox(it));
+  if (list.length > 1) {
+    const bs = list.map(bbox);
+    const x1 = Math.min(...bs.map(b => b.x)), y1 = Math.min(...bs.map(b => b.y));
+    const x2 = Math.max(...bs.map(b => b.x + b.w)), y2 = Math.max(...bs.map(b => b.y + b.h));
+    mk({ x: x1 - 6 / view.z, y: y1 - 6 / view.z, w: x2 - x1 + 12 / view.z, h: y2 - y1 + 12 / view.z }, 'group');
+  }
+  if (list.length === 1 && ['sticky', 'rect', 'ellipse', 'text'].includes(list[0].type) && editingId !== list[0].id) {
+    const h = document.createElement('div');
+    h.className = 'handle'; h.dataset.handle = '1';
+    selEl.lastChild.appendChild(h);
+  }
+  drawCtx(list);
+}
+function drawCtx(list) {
+  const ctx = $('#ctx');
+  if (!list.length || editingId) { ctx.classList.remove('show'); return; }
+  const bs = list.map(bbox);
+  const x1 = Math.min(...bs.map(b => b.x)), x2 = Math.max(...bs.map(b => b.x + b.w)), y1 = Math.min(...bs.map(b => b.y));
+  const sx = view.x + ((x1 + x2) / 2) * view.z, sy = view.y + y1 * view.z - 16;
+  ctx.style.left = Math.max(120, Math.min(innerWidth - 120, sx)) + 'px';
+  ctx.style.top = Math.max(60, sy) + 'px';
+  if (!ctx.dataset.built) {
+    ctx.innerHTML = COLORS.map(c => `<button class="sw" data-color="${c}" aria-label="Цвет ${c === 'ink' ? 'чернила' : c}" aria-pressed="false" style="background:${colorOf(c)}"></button>`).join('') +
+      '<span class="sep" style="width:1px;height:18px;margin:0 2px"></span>' +
+      '<button class="ctxbtn" data-act="dup" aria-label="Дублировать (Ctrl+D)" title="Дублировать"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>' +
+      '<button class="ctxbtn" data-act="del" aria-label="Удалить (Delete)" title="Удалить"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>';
+    ctx.dataset.built = '1';
+  }
+  const colors = new Set(list.map(i => i.color));
+  ctx.querySelectorAll('.sw').forEach(b => b.setAttribute('aria-pressed', colors.size === 1 && colors.has(b.dataset.color) ? 'true' : 'false'));
+  ctx.classList.add('show');
+}
+
+/* ---------- actions ---------- */
+function setTool(t) {
+  tool = t;
+  stage.dataset.tool = t;
+  document.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === t ? 'true' : 'false'));
+}
+function select(ids) { sel = new Set(ids); drawSelection(); }
+function deleteSel() {
+  if (!sel.size) return;
+  pushUndo();
+  const gone = new Set(sel);
+  const gonePos = new Map([...gone].map(id => [id, center(byId(id) || { x: 0, y: 0, w: 0, h: 0 })]));
+  items = items.filter(i => !gone.has(i.id));
+  // detach connectors from removed items
+  for (const it of items) if (it.type === 'arrow') for (const k of ['a', 'b']) if (gone.has(it[k].id)) {
+    const t = gonePos.get(it[k].id); it[k] = { id: null, x: t.x, y: t.y };
+  }
+  sel.clear(); draw(); save();
+}
+function duplicateSel() {
+  if (!sel.size) return;
+  pushUndo();
+  const copies = [];
+  for (const id of sel) {
+    const c = JSON.parse(JSON.stringify(byId(id)));
+    c.id = uid();
+    if (c.type === 'arrow') { c.a.id = null; c.b.id = null; const a = endpoint(byId(id), 'a'), b = endpoint(byId(id), 'b'); c.a.x = a.x; c.a.y = a.y; c.b.x = b.x; c.b.y = b.y; }
+    moveItem(c, 24, 24);
+    copies.push(c);
+  }
+  items.push(...copies);
+  select(copies.map(c => c.id)); draw(); save();
+}
+function addItem(it) { items.push(it); draw(); save(); return it; }
+function startEdit(id) {
+  const it = byId(id), el = els.get(id);
+  if (!it || !el || !el.classList.contains('item')) return;
+  pushUndo();
+  editingId = id;
+  el.classList.add('editing');
+  const t = el.firstChild;
+  t.contentEditable = 'plaintext-only';
+  if (t.contentEditable !== 'plaintext-only') t.contentEditable = 'true';
+  t.focus();
+  const r = document.createRange(); r.selectNodeContents(t);
+  const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+  drawSelection();
+}
+function endEdit() {
+  if (!editingId) return;
+  const id = editingId, it = byId(id), el = els.get(id);
+  editingId = null;
+  if (el) {
+    const t = el.firstChild;
+    el.classList.remove('editing');
+    t.contentEditable = 'false';
+    if (it) {
+      it.text = t.innerText.replace(/\n$/, '');
+      if (it.type === 'text') { it.h = Math.max(32, el.firstChild.scrollHeight + 8); }
+      if (it.type === 'text' && !it.text.trim()) { items = items.filter(i => i !== it); sel.delete(id); }
+    }
+  }
+  getSelection().removeAllRanges();
+  draw(); save();
+}
+function setZoom(z, cx = innerWidth / 2, cy = innerHeight / 2) {
+  z = Math.min(4, Math.max(0.1, z));
+  const w = toWorld(cx, cy);
+  view.z = z; view.x = cx - w.x * z; view.y = cy - w.y * z;
+  draw(); save();
+}
+function fit() {
+  if (!items.length) { view = { x: innerWidth / 2, y: innerHeight / 2, z: 1 }; draw(); return; }
+  const bs = items.map(bbox);
+  const x1 = Math.min(...bs.map(b => b.x)), y1 = Math.min(...bs.map(b => b.y));
+  const x2 = Math.max(...bs.map(b => b.x + b.w)), y2 = Math.max(...bs.map(b => b.y + b.h));
+  const pad = 120;
+  const z = Math.min(2, Math.max(0.1, Math.min((innerWidth - pad * 2) / Math.max(1, x2 - x1), (innerHeight - pad * 2) / Math.max(1, y2 - y1))));
+  view = { z, x: innerWidth / 2 - ((x1 + x2) / 2) * z, y: innerHeight / 2 - ((y1 + y2) / 2) * z };
+  draw(); save();
+}
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+/* ---------- pointer interaction ---------- */
+const pointers = new Map();
+let g = null; // current gesture
+let pinch = null;
+
+function itemAt(target) {
+  const n = target.closest && target.closest('[data-id]');
+  return n && stage.contains(n) ? byId(n.dataset.id) : null;
+}
+stage.addEventListener('pointerdown', e => {
+  if (e.target.closest('.panel')) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  stage.setPointerCapture(e.pointerId);
+
+  if (pointers.size === 2) { // pinch / two-finger pan
+    g = null; $('#marquee').style.display = 'none';
+    const [a, b] = [...pointers.values()];
+    pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
+    return;
+  }
+  if (editingId) {
+    if (e.target.closest('.item.editing')) return;
+    endEdit();
+  }
+  const w = toWorld(e.clientX, e.clientY);
+  const panning = e.button === 1 || tool === 'hand' || spaceDown;
+  if (panning) { g = { k: 'pan', sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y }; stage.classList.add('panning'); e.preventDefault(); return; }
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
+
+  if (tool === 'select') {
+    if (e.target.dataset.handle) {
+      const it = byId([...sel][0]);
+      pushUndo();
+      g = { k: 'resize', it, sx: w.x, sy: w.y, w: it.w, h: it.h };
+      return;
+    }
+    const it = itemAt(e.target);
+    if (it) {
+      if (e.shiftKey) { sel.has(it.id) ? sel.delete(it.id) : sel.add(it.id); }
+      else if (!sel.has(it.id)) sel = new Set([it.id]);
+      drawSelection();
+      g = { k: 'move', lx: w.x, ly: w.y, moved: false };
+    } else {
+      if (!e.shiftKey) sel.clear();
+      drawSelection();
+      g = { k: 'marquee', sx: e.clientX, sy: e.clientY, base: new Set(sel) };
+    }
+    return;
+  }
+  if (tool === 'sticky' || tool === 'text') {
+    pushUndo();
+    const it = tool === 'sticky'
+      ? { id: uid(), type: 'sticky', x: w.x - 100, y: w.y - 100, w: 200, h: 200, color: COLORS[0], text: '' }
+      : { id: uid(), type: 'text', x: w.x, y: w.y - 16, w: 240, h: 40, color: 'ink', text: '' };
+    addItem(it); select([it.id]); setTool('select');
+    requestAnimationFrame(() => startEdit(it.id));
+    e.preventDefault();
+    return;
+  }
+  if (tool === 'rect' || tool === 'ellipse') {
+    pushUndo();
+    const it = addItem({ id: uid(), type: tool, x: w.x, y: w.y, w: 1, h: 1, color: COLORS[3], text: '' });
+    select([it.id]);
+    g = { k: 'shape', it, sx: w.x, sy: w.y };
+    return;
+  }
+  if (tool === 'pen') {
+    pushUndo();
+    const it = addItem({ id: uid(), type: 'pen', pts: [[w.x, w.y]], color: 'ink' });
+    g = { k: 'pen', it };
+    return;
+  }
+  if (tool === 'arrow') {
+    pushUndo();
+    const t = itemAt(e.target);
+    const att = t && t.type !== 'pen' && t.type !== 'arrow' ? t.id : null;
+    const it = addItem({ id: uid(), type: 'arrow', a: { id: att, x: w.x, y: w.y }, b: { id: null, x: w.x, y: w.y }, color: 'ink' });
+    g = { k: 'arrow', it };
+  }
+});
+stage.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && pointers.size >= 2) {
+    const [a, b] = [...pointers.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y), cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    const w = toWorld(pinch.cx, pinch.cy);
+    const z = Math.min(4, Math.max(0.1, view.z * d / pinch.d));
+    view.z = z; view.x = cx - w.x * z; view.y = cy - w.y * z;
+    pinch = { d, cx, cy };
+    draw();
+    return;
+  }
+  if (!g) return;
+  const w = toWorld(e.clientX, e.clientY);
+  switch (g.k) {
+    case 'pan':
+      view.x = g.ox + (e.clientX - g.sx); view.y = g.oy + (e.clientY - g.sy); draw(); break;
+    case 'move': {
+      const dx = w.x - g.lx, dy = w.y - g.ly;
+      if (!g.moved && Math.hypot(dx, dy) * view.z < 3) break;
+      if (!g.moved) { pushUndo(); g.moved = true; }
+      for (const id of sel) moveItem(byId(id), dx, dy);
+      g.lx = w.x; g.ly = w.y; draw(); break;
+    }
+    case 'resize':
+      g.it.w = Math.max(48, g.w + (w.x - g.sx)); g.it.h = Math.max(32, g.h + (w.y - g.sy)); draw(); break;
+    case 'shape':
+      g.it.x = Math.min(g.sx, w.x); g.it.y = Math.min(g.sy, w.y);
+      g.it.w = Math.max(1, Math.abs(w.x - g.sx)); g.it.h = Math.max(1, Math.abs(w.y - g.sy)); draw(); break;
+    case 'pen': {
+      const last = g.it.pts[g.it.pts.length - 1];
+      if (Math.hypot(w.x - last[0], w.y - last[1]) * view.z > 2) { g.it.pts.push([w.x, w.y]); drawVec(g.it, els.get(g.it.id)); }
+      break;
+    }
+    case 'arrow': {
+      const t = document.elementFromPoint(e.clientX, e.clientY);
+      const hit = t && itemAt(t);
+      g.it.b = { id: hit && hit.id !== g.it.a.id && hit.type !== 'pen' && hit.type !== 'arrow' ? hit.id : null, x: w.x, y: w.y };
+      draw(); break;
+    }
+    case 'marquee': {
+      const m = $('#marquee'), x = Math.min(g.sx, e.clientX), y = Math.min(g.sy, e.clientY);
+      Object.assign(m.style, { display: 'block', left: x + 'px', top: y + 'px', width: Math.abs(e.clientX - g.sx) + 'px', height: Math.abs(e.clientY - g.sy) + 'px' });
+      const a = toWorld(x, y), b = toWorld(x + Math.abs(e.clientX - g.sx), y + Math.abs(e.clientY - g.sy));
+      const next = new Set(g.base);
+      for (const it of items) { const bb = bbox(it); if (bb.x < b.x && bb.x + bb.w > a.x && bb.y < b.y && bb.y + bb.h > a.y) next.add(it.id); }
+      sel = next; drawSelection(); break;
+    }
+  }
+});
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) pinch = null;
+  if (!g) return;
+  const k = g.k;
+  if (k === 'pan') { stage.classList.remove('panning'); save(); }
+  if (k === 'marquee') $('#marquee').style.display = 'none';
+  if (k === 'shape') {
+    const it = g.it;
+    if (it.w < 8 && it.h < 8) { it.x -= 90; it.y -= 60; it.w = 180; it.h = 120; } // plain click → default size
+    draw();
+  }
+  if (k === 'arrow') {
+    const it = g.it, a = endpoint(it, 'a'), b = endpoint(it, 'b');
+    if (Math.hypot(a.x - b.x, a.y - b.y) < 12) { items = items.filter(i => i !== it); sel.clear(); }
+    else select([it.id]);
+  }
+  if (k === 'pen') select([]);
+  if (k === 'shape' || k === 'arrow' || k === 'pen') { if (k !== 'pen') setTool('select'); }
+  g = null; draw(); if (k !== 'pan') save();
+}
+stage.addEventListener('pointerup', endPointer);
+stage.addEventListener('pointercancel', endPointer);
+
+stage.addEventListener('dblclick', e => {
+  const it = itemAt(e.target);
+  if (it && it.type !== 'pen' && it.type !== 'arrow') { select([it.id]); startEdit(it.id); return; }
+  if (!it && tool === 'select') { // double-click on empty canvas → new sticky
+    const w = toWorld(e.clientX, e.clientY);
+    pushUndo();
+    const n = addItem({ id: uid(), type: 'sticky', x: w.x - 100, y: w.y - 100, w: 200, h: 200, color: COLORS[0], text: '' });
+    select([n.id]); requestAnimationFrame(() => startEdit(n.id));
+  }
+});
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) setZoom(view.z * Math.exp(-e.deltaY * 0.01), e.clientX, e.clientY);
+  else { view.x -= e.deltaX; view.y -= e.deltaY; draw(); save(); }
+}, { passive: false });
+stage.addEventListener('contextmenu', e => e.preventDefault());
+
+/* ---------- ui wiring ---------- */
+const toolsEl = $('#tools');
+for (const t of TOOLS) {
+  if (!t) { toolsEl.insertAdjacentHTML('beforeend', '<div class="sep"></div>'); continue; }
+  const [id, label, key] = t;
+  toolsEl.insertAdjacentHTML('beforeend',
+    `<button class="tool" data-tool="${id}" aria-label="${label} (${key})" aria-pressed="${id === 'select'}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[id]}</svg><span class="tip">${label} · ${key}</span></button>`);
+}
+toolsEl.insertAdjacentHTML('beforeend', '<div class="sep"></div><button class="tool" id="clear" aria-label="Очистить доску"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg><span class="tip">Очистить доску</span></button>');
+toolsEl.addEventListener('click', e => {
+  const b = e.target.closest('.tool'); if (!b) return;
+  if (b.id === 'clear') {
+    if (items.length && confirm('Удалить всё с доски? Это можно отменить через Ctrl+Z.')) { pushUndo(); items = []; sel.clear(); draw(); save(); }
+    return;
+  }
+  endEdit(); setTool(b.dataset.tool);
+});
+$('#ctx').addEventListener('click', e => {
+  const c = e.target.closest('[data-color]'), a = e.target.closest('[data-act]');
+  if (c) {
+    pushUndo();
+    for (const id of sel) {
+      const it = byId(id); if (!it) continue;
+      if (it.type === 'text' && c.dataset.color !== 'ink') continue; // text stays ink-coloured
+      it.color = c.dataset.color;
+    }
+    draw(); save();
+  } else if (a) { a.dataset.act === 'del' ? deleteSel() : duplicateSel(); }
+});
+$('#undo').onclick = undo; $('#redo').onclick = redo;
+$('#zoomIn').onclick = () => setZoom(view.z * 1.25);
+$('#zoomOut').onclick = () => setZoom(view.z / 1.25);
+$('#zoomLabel').onclick = () => setZoom(1);
+$('#fit').onclick = fit;
+
+const KEYS = { v: 'select', h: 'hand', s: 'sticky', t: 'text', r: 'rect', o: 'ellipse', a: 'arrow', p: 'pen' };
+addEventListener('keydown', e => {
+  const typing = e.target.isContentEditable || /input|textarea/i.test(e.target.tagName);
+  if (typing) { if (e.key === 'Escape') { e.target.blur(); } return; }
+  const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+  if (e.code === 'Space') { if (!spaceDown) { spaceDown = true; stage.style.cursor = 'grab'; } e.preventDefault(); return; }
+  if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+  else if (mod && k === 'y') { e.preventDefault(); redo(); }
+  else if (mod && k === 'd') { e.preventDefault(); duplicateSel(); }
+  else if (mod && k === 'a') { e.preventDefault(); select(items.map(i => i.id)); }
+  else if (k === 'delete' || k === 'backspace') { e.preventDefault(); deleteSel(); }
+  else if (k === 'escape') { select([]); setTool('select'); }
+  else if (k === 'enter' && sel.size === 1) { const it = byId([...sel][0]); if (it && it.type !== 'pen' && it.type !== 'arrow') { e.preventDefault(); startEdit(it.id); } }
+  else if (e.shiftKey && (e.key === ')' || e.key === '0')) setZoom(1);
+  else if (e.shiftKey && (e.key === '!' || e.key === '1')) fit();
+  else if (!mod && (k === '+' || k === '=')) setZoom(view.z * 1.25);
+  else if (!mod && (k === '-' || k === '_')) setZoom(view.z / 1.25);
+  else if (!mod && KEYS[k]) setTool(KEYS[k]);
+  else if (k.startsWith('arrow') && sel.size) {
+    e.preventDefault(); pushUndo();
+    const s = e.shiftKey ? 10 : 1, d = { arrowleft: [-s, 0], arrowright: [s, 0], arrowup: [0, -s], arrowdown: [0, s] }[k];
+    for (const id of sel) moveItem(byId(id), d[0], d[1]);
+    draw(); save();
+  }
+});
+addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; stage.style.cursor = ''; } });
+addEventListener('blur', () => { spaceDown = false; stage.style.cursor = ''; });
+itemsEl.addEventListener('focusout', e => { if (e.target.classList.contains('txt')) endEdit(); });
+itemsEl.addEventListener('input', e => {
+  const it = byId(editingId); if (!it) return;
+  if (it.type === 'text') { it.h = Math.max(32, e.target.scrollHeight + 8); els.get(it.id).style.minHeight = it.h + 'px'; drawSelection(); }
+});
+addEventListener('resize', draw);
+
+/* ---------- boot ---------- */
+if (!load()) {
+  view = { x: innerWidth / 2 - 320, y: innerHeight / 2 - 200, z: 1 };
+  items = [
+    { id: uid(), type: 'text', x: 0, y: -10, w: 480, h: 44, color: 'ink', text: 'Добро пожаловать на доску' },
+    { id: uid(), type: 'sticky', x: 0, y: 60, w: 200, h: 200, color: COLORS[0], text: 'Двойной клик по пустому месту — новый стикер' },
+    { id: uid(), type: 'sticky', x: 260, y: 90, w: 200, h: 200, color: COLORS[3], text: 'Колесо — двигать, Ctrl + колесо — масштаб, пробел + drag — рука' },
+    { id: uid(), type: 'sticky', x: 520, y: 60, w: 200, h: 200, color: COLORS[1], text: 'Фигуры, стрелки и карандаш — слева. Всё сохраняется в браузере' },
+    { id: uid(), type: 'ellipse', x: 280, y: 360, w: 180, h: 110, color: COLORS[2], text: 'Идея' },
+  ];
+  const [, s1, , , e1] = items;
+  items.push({ id: uid(), type: 'arrow', a: { id: s1.id, x: 0, y: 0 }, b: { id: e1.id, x: 0, y: 0 }, color: 'ink' });
+}
+setTool('select'); draw(); updateHistoryBtns();
+})();
+</script>
+</body>
+</html>
