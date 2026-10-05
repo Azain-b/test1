@@ -18,8 +18,13 @@
     --shadow: 0 1px 2px rgba(15,16,32,.08), 0 8px 24px rgba(15,16,32,.12);
     color-scheme: light;
   }
+  :root[data-theme="dark"] {
+    --canvas: #15161b; --dot: #2c2e37; --surface: #20222a; --ink: #ececf1; --muted: #9a9db0;
+    --line: rgba(255,255,255,.1); --sel: #7b92ff; --hover: rgba(255,255,255,.08);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.4); color-scheme: dark;
+  }
   @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
+    :root:not([data-theme]) {
       --canvas: #15161b; --dot: #2c2e37; --surface: #20222a; --ink: #ececf1; --muted: #9a9db0;
       --line: rgba(255,255,255,.1); --sel: #7b92ff; --hover: rgba(255,255,255,.08);
       --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.4); color-scheme: dark;
@@ -74,8 +79,16 @@
   .tool:hover .tip, .tool:focus-visible .tip { opacity: 1; transform: none; }
   .sep { height: 1px; background: var(--line); margin: 4px 6px; }
 
-  #ctx { display: none; align-items: center; gap: 4px; padding: 6px; transform: translate(-50%, -100%); }
+  #ctx { display: none; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; padding: 6px; transform: translate(-50%, -100%); width: max-content; max-width: min(380px, calc(100vw - 16px)); }
   #ctx.show { display: flex; }
+  #ctx .tg { display: none; align-items: center; gap: 2px; flex-basis: 100%; justify-content: center; padding-top: 4px; border-top: 1px solid var(--line); }
+  #ctx.has-text .tg { display: flex; }
+  .ctxbtn[aria-pressed="true"] { background: var(--accent); color: #0f1020; }
+  .ctxbtn.tx { font-weight: 700; font-size: 14px; width: 30px; }
+  .sizeval { min-width: 30px; text-align: center; font-variant-numeric: tabular-nums; color: var(--muted); }
+  #themeBtn { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; margin-left: 4px; }
+  #themeBtn:hover { background: var(--hover); }
+  #themeBtn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .sw { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,.2); }
   .sw[aria-pressed="true"] { border-color: var(--surface); outline: 2px solid var(--sel); }
   .ctxbtn { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; }
@@ -119,7 +132,7 @@
 </div>
 <div id="marquee"></div>
 
-<div class="panel" id="brand"><span class="logo"><svg viewBox="0 0 16 16"><path d="M2 12 L6 4 L10 10 L14 3"/></svg></span><b>Infinite Board</b></div>
+<div class="panel" id="brand"><span class="logo"><svg viewBox="0 0 16 16"><path d="M2 12 L6 4 L10 10 L14 3"/></svg></span><b>Infinite Board</b><button id="themeBtn" aria-label="Сменить тему" title="Сменить тему (D)"></button></div>
 
 <nav class="panel" id="tools" aria-label="Инструменты"></nav>
 
@@ -135,7 +148,7 @@
   <button id="fit" aria-label="Показать всё (Shift+1)" title="Показать всё (Shift+1)"><svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/></svg></button>
 </div>
 
-<div class="panel" id="hint"><kbd>Пробел</kbd> + drag или колесо — двигать · <kbd>Ctrl</kbd> + колесо — масштаб · двойной клик — текст</div>
+<div class="panel" id="hint"><kbd>Пробел</kbd> + drag — двигать · <kbd>Ctrl</kbd> + колесо — масштаб · двойной клик или <kbd>Enter</kbd> — текст · <kbd>D</kbd> — тема</div>
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script>
@@ -270,7 +283,8 @@ function draw() {
     const el = els.get(it.id) || mkEl(it);
     if (it.type === 'pen' || it.type === 'arrow') drawVec(it, el);
     else {
-      el.style.cssText = `left:${it.x}px;top:${it.y}px;width:${it.w}px;height:${it.h}px;`;
+      const f = fmt(it);
+      el.style.cssText = `left:${it.x}px;top:${it.y}px;width:${it.w}px;height:${it.h}px;font-size:${f.fs}px;font-weight:${f.b ? 700 : 500};font-style:${f.i ? 'italic' : 'normal'};text-align:${f.al};justify-content:${JUSTIFY[f.al]};`;
       if (it.type !== 'text') el.style.background = colorOf(it.color);
       else el.style.minHeight = it.h + 'px';
       const t = el.firstChild;
@@ -327,7 +341,7 @@ function drawSelection() {
 }
 function drawCtx(list) {
   const ctx = $('#ctx');
-  if (!list.length || editingId) { ctx.classList.remove('show'); return; }
+  if (!list.length) { ctx.classList.remove('show'); return; }
   const bs = list.map(bbox);
   const x1 = Math.min(...bs.map(b => b.x)), x2 = Math.max(...bs.map(b => b.x + b.w)), y1 = Math.min(...bs.map(b => b.y));
   const sx = view.x + ((x1 + x2) / 2) * view.z, sy = view.y + y1 * view.z - 16;
@@ -337,13 +351,76 @@ function drawCtx(list) {
     ctx.innerHTML = COLORS.map(c => `<button class="sw" data-color="${c}" aria-label="Цвет ${c === 'ink' ? 'чернила' : c}" aria-pressed="false" style="background:${colorOf(c)}"></button>`).join('') +
       '<span class="sep" style="width:1px;height:18px;margin:0 2px"></span>' +
       '<button class="ctxbtn" data-act="dup" aria-label="Дублировать (Ctrl+D)" title="Дублировать"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>' +
-      '<button class="ctxbtn" data-act="del" aria-label="Удалить (Delete)" title="Удалить"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>';
+      '<button class="ctxbtn" data-act="del" aria-label="Удалить (Delete)" title="Удалить"><svg viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg></button>' +
+      '<div class="tg" role="group" aria-label="Текст">' +
+        '<button class="ctxbtn tx" data-act="fs-" aria-label="Меньше шрифт" title="Меньше шрифт">A−</button>' +
+        '<span class="sizeval" aria-live="polite"></span>' +
+        '<button class="ctxbtn tx" data-act="fs+" aria-label="Больше шрифт" title="Больше шрифт">A+</button>' +
+        '<span class="sep" style="width:1px;height:18px;margin:0 4px"></span>' +
+        '<button class="ctxbtn tx" data-act="b" aria-label="Жирный (Ctrl+B)" title="Жирный (Ctrl+B)">B</button>' +
+        '<button class="ctxbtn tx" data-act="i" aria-label="Курсив (Ctrl+I)" title="Курсив (Ctrl+I)" style="font-style:italic;font-weight:600">I</button>' +
+        '<span class="sep" style="width:1px;height:18px;margin:0 4px"></span>' +
+        '<button class="ctxbtn" data-act="al-left" aria-label="По левому краю" title="По левому краю"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h14"/></svg></button>' +
+        '<button class="ctxbtn" data-act="al-center" aria-label="По центру" title="По центру"><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M5 18h14"/></svg></button>' +
+        '<button class="ctxbtn" data-act="al-right" aria-label="По правому краю" title="По правому краю"><svg viewBox="0 0 24 24"><path d="M4 6h16M10 12h10M6 18h14"/></svg></button>' +
+      '</div>';
     ctx.dataset.built = '1';
   }
   const colors = new Set(list.map(i => i.color));
   ctx.querySelectorAll('.sw').forEach(b => b.setAttribute('aria-pressed', colors.size === 1 && colors.has(b.dataset.color) ? 'true' : 'false'));
+  const txt = list.filter(isTextual);
+  ctx.classList.toggle('has-text', txt.length > 0);
+  if (txt.length) {
+    const fs = new Set(txt.map(i => fmt(i).fs));
+    ctx.querySelector('.sizeval').textContent = fs.size === 1 ? [...fs][0] : '–';
+    const on = (k, v) => txt.every(i => fmt(i)[k] === v);
+    ctx.querySelector('[data-act="b"]').setAttribute('aria-pressed', on('b', true));
+    ctx.querySelector('[data-act="i"]').setAttribute('aria-pressed', on('i', true));
+    for (const a of ['left', 'center', 'right']) ctx.querySelector(`[data-act="al-${a}"]`).setAttribute('aria-pressed', on('al', a));
+  }
   ctx.classList.add('show');
 }
+const SIZES = [12, 14, 16, 18, 24, 32, 48, 64, 96];
+const JUSTIFY = { left: 'flex-start', center: 'center', right: 'flex-end' };
+const isTextual = it => it.type === 'sticky' || it.type === 'text' || it.type === 'rect' || it.type === 'ellipse';
+function fmt(it) {
+  const d = it.type === 'text' ? { fs: 24, al: 'left' } : it.type === 'sticky' ? { fs: 18, al: 'left' } : { fs: 16, al: 'center' };
+  return { fs: it.fs || d.fs, b: !!it.b, i: !!it.i, al: it.al || d.al };
+}
+function applyFmt(fn) {
+  const list = [...sel].map(byId).filter(it => it && isTextual(it));
+  if (!list.length) return;
+  if (!editingId) pushUndo();
+  for (const it of list) fn(it, fmt(it));
+  draw();
+  for (const it of list) if (it.type === 'text') it.h = Math.max(32, els.get(it.id).firstChild.scrollHeight + 8);
+  draw(); save();
+}
+function stepSize(cur, dir) {
+  const i = SIZES.findIndex(s => s >= cur);
+  return SIZES[Math.max(0, Math.min(SIZES.length - 1, dir > 0 ? (SIZES[i] === cur ? i + 1 : i) : (i < 0 ? SIZES.length - 1 : i - 1)))];
+}
+/* ---------- theme ---------- */
+const THEME_KEY = 'infinite-board.theme';
+const root = document.documentElement;
+const sysDark = matchMedia('(prefers-color-scheme: dark)');
+function isDark() { return root.dataset.theme ? root.dataset.theme === 'dark' : sysDark.matches; }
+function paintTheme() {
+  const dark = isDark();
+  $('#themeBtn').innerHTML = dark
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/></svg>'
+    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg>';
+  document.querySelectorAll('meta[name="theme-color"]').forEach(m => { m.removeAttribute('media'); m.content = dark ? '#15161b' : '#f7f7f5'; });
+}
+function setTheme(t) {
+  root.dataset.theme = t;
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* storage unavailable */ }
+  paintTheme();
+}
+try { const t = localStorage.getItem(THEME_KEY); if (t === 'light' || t === 'dark') root.dataset.theme = t; } catch (e) { /* ignore */ }
+sysDark.addEventListener('change', paintTheme);
+$('#themeBtn').onclick = () => setTheme(isDark() ? 'light' : 'dark');
+paintTheme();
 
 /* ---------- actions ---------- */
 function setTool(t) {
@@ -587,8 +664,11 @@ stage.addEventListener('pointerup', endPointer);
 stage.addEventListener('pointercancel', endPointer);
 
 stage.addEventListener('dblclick', e => {
-  const it = itemAt(e.target);
+  if (e.target.closest('.panel')) return;
+  const under = document.elementFromPoint(e.clientX, e.clientY); // pointer capture retargets e.target to the stage
+  const it = under && itemAt(under);
   if (it && it.type !== 'pen' && it.type !== 'arrow') { select([it.id]); startEdit(it.id); return; }
+  if (it) return;
   if (!it && tool === 'select') { // double-click on empty canvas → new sticky
     const w = toWorld(e.clientX, e.clientY);
     pushUndo();
@@ -630,8 +710,15 @@ $('#ctx').addEventListener('click', e => {
       it.color = c.dataset.color;
     }
     draw(); save();
-  } else if (a) { a.dataset.act === 'del' ? deleteSel() : duplicateSel(); }
+  } else if (a) {
+    const act = a.dataset.act;
+    if (act === 'del' || act === 'dup') { endEdit(); act === 'del' ? deleteSel() : duplicateSel(); }
+    else if (act === 'fs+' || act === 'fs-') applyFmt((it, f) => { it.fs = stepSize(f.fs, act === 'fs+' ? 1 : -1); });
+    else if (act === 'b' || act === 'i') applyFmt((it, f) => { it[act] = !f[act]; });
+    else if (act.startsWith('al-')) applyFmt(it => { it.al = act.slice(3); });
+  }
 });
+$('#ctx').addEventListener('mousedown', e => e.preventDefault()); // keep text focus while formatting
 $('#undo').onclick = undo; $('#redo').onclick = redo;
 $('#zoomIn').onclick = () => setZoom(view.z * 1.25);
 $('#zoomOut').onclick = () => setZoom(view.z / 1.25);
@@ -641,8 +728,14 @@ $('#fit').onclick = fit;
 const KEYS = { v: 'select', h: 'hand', s: 'sticky', t: 'text', r: 'rect', o: 'ellipse', a: 'arrow', p: 'pen' };
 addEventListener('keydown', e => {
   const typing = e.target.isContentEditable || /input|textarea/i.test(e.target.tagName);
-  if (typing) { if (e.key === 'Escape') { e.target.blur(); } return; }
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+  if (typing) {
+    if (e.key === 'Escape') e.target.blur();
+    else if (mod && (k === 'b' || k === 'i') && editingId) { e.preventDefault(); applyFmt((it, f) => { it[k] = !f[k]; }); }
+    return;
+  }
+  if (!mod && k === 'd' && !e.shiftKey) { setTheme(isDark() ? 'light' : 'dark'); return; }
+  if (mod && (k === 'b' || k === 'i') && sel.size) { e.preventDefault(); applyFmt((it, f) => { it[k] = !f[k]; }); return; }
   if (e.code === 'Space') { if (!spaceDown) { spaceDown = true; stage.style.cursor = 'grab'; } e.preventDefault(); return; }
   if (mod && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (mod && k === 'y') { e.preventDefault(); redo(); }
